@@ -5,7 +5,7 @@
 #define PWM_PIN  12
 #define PWM_FREQ 25000
 #define PWM_CHANNEL 0
-#define PWM_RESOLUTION 8
+#define PWM_RESOLUTION 7
 
 #define PCNT_INPUT_PIN  36
 #define PCNT_FILT_VAL   1023
@@ -43,7 +43,7 @@ void PWM_config()
   pinMode(PWM_PIN, OUTPUT);
   ledcAttachPin(PWM_PIN, PWM_CHANNEL);
   ledcSetup(PWM_CHANNEL, PWM_FREQ, PWM_RESOLUTION);
-  ledcWrite(PWM_CHANNEL, 255);
+  ledcWrite(PWM_CHANNEL, 127);
 }
 
 void setup() {
@@ -56,7 +56,7 @@ void setup() {
 void loop() {
   static unsigned long timer;
   static unsigned short counter = 0;
-  static unsigned short dutyCycle = 255;
+  static unsigned short dutyCycle = 127;
 
   if (millis() - timer > 1000)
   {
@@ -74,6 +74,6 @@ void loop() {
   }
   if (dutyCycle < 1)
   {
-    dutyCycle = 256;
+    dutyCycle = 127;
   }
 }
