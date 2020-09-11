@@ -55,7 +55,7 @@ void setup() {
 
 void loop() {
   static unsigned long timer;
-  static unsigned short counter = 0;
+  static short counter = 0;
   static unsigned short dutyCycle = 127;
 
   if (millis() - timer > 1000)
@@ -63,7 +63,8 @@ void loop() {
     pcnt_get_counter_value(PCNT_UNIT_0, &counter);
     pcnt_counter_clear(PCNT_UNIT_0);
     Serial.print("Counter:");
-    Serial.println(60*counter/2);
+    Serial.println(60 * counter / 2);
+    Serial.println(127 - dutyCycle);
     timer = millis();
   }
   if (!digitalRead(BUT_PIN))
