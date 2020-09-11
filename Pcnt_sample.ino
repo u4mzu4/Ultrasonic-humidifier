@@ -43,7 +43,7 @@ void PWM_config()
   pinMode(PWM_PIN, OUTPUT);
   ledcAttachPin(PWM_PIN, PWM_CHANNEL);
   ledcSetup(PWM_CHANNEL, PWM_FREQ, PWM_RESOLUTION);
-  ledcWrite(PWM_CHANNEL, 0);
+  ledcWrite(PWM_CHANNEL, 255);
 }
 
 void setup() {
@@ -55,25 +55,25 @@ void setup() {
 
 void loop() {
   static unsigned long timer;
-  static short counter = 0;
-  static unsigned short dutyCycle = 0;
+  static unsigned short counter = 0;
+  static unsigned short dutyCycle = 255;
 
   if (millis() - timer > 1000)
   {
     pcnt_get_counter_value(PCNT_UNIT_0, &counter);
     pcnt_counter_clear(PCNT_UNIT_0);
     Serial.print("Counter:");
-    Serial.println(counter);
+    Serial.println(60*counter/2);
     timer = millis();
   }
   if (!digitalRead(BUT_PIN))
   {
-    dutyCycle++;
+    dutyCycle--;
     ledcWrite(PWM_CHANNEL, dutyCycle);
     delay(100);
   }
-  if (dutyCycle > 255)
+  if (dutyCycle < 1)
   {
-    dutyCycle = 0;
+    dutyCycle = 256;
   }
 }
