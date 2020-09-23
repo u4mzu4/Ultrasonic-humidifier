@@ -34,39 +34,45 @@ enum MAIN_SM {
 #define INTERRUPT_PIN   17
 #define DAC_PIN         25
 #define RELAY_PIN       32
-#define BUT_PIN         34
 #define PCNT_INPUT_PIN  36
 
 #define FALSE           false
 #define TRUE            true
-#define PWM_FREQ        25000  //25kHz
+#define PWM_FREQ        25000   //25kHz
 #define PWM_CHANNEL     0
-#define PWM_RESOLUTION  7   //7 bit
-#define PWM_MAX_VALUE   127   //2^PWM_RESOLUTION - 1
+#define PWM_RESOLUTION  7       //7 bit
+#define PWM_MAX_VALUE   127     //2^PWM_RESOLUTION - 1
 #define PCNT_FILT_VAL   1023
 #define PCNT_L_LIM_VAL  0
 #define PCNT_H_LIM_VAL  14400
 #define DAC_DEFAULT     96
-#define DAC_STEP        38  //6000 / (255 - DAC_DEFAULT)
-#define DAC_MAX_VALUE   255   //2^8 - 1
-#define RPM_STEP        47    //6000 / PWM_MAX_VALUE
-#define MAX_SPEED       5969  //PWM_MAX_VALUE * RPM_STEP
-#define SETTLING_TIME   3   //3 sec
-#define DEF_HUMIDITY    45    //DEFAULT AUTO SETTINGS
-#define MIN_HUMIDITY    19    //LOWEST MEASURED HUMIDITY EVER
-#define AUTO_TIMER      60000 //1 min
-#define NIGHT_AFTER     21    //NIGHT START
-#define NIGHT_BEFORE    7     //NIGHT END
+#define DAC_STEP        38      //6000 / (255 - DAC_DEFAULT)
+#define DAC_MAX_VALUE   255     //2^8 - 1
+#define RPM_STEP        47      //6000 / PWM_MAX_VALUE
+#define MAX_SPEED       5969    //PWM_MAX_VALUE * RPM_STEP
+#define SETTLING_TIME   3       //3 sec
+#define DEF_HUMIDITY    60      //DEFAULT AUTO SETTINGS
+#define MIN_HUMIDITY    19      //LOWEST MEASURED HUMIDITY EVER
+#define AUTO_TIMER      60000   //1 min
+#define NIGHT_AFTER     21      //NIGHT START
+#define NIGHT_BEFORE    7       //NIGHT END
 #define ENCODER_ADDRESS 0x02
-#define TIMEOUT         5000  //5 sec
-#define YEAR_MIN    2019
-#define YEAR_MAX    2035
+#define TIMEOUT         5000    //5 sec
+#define YEAR_MIN        2019
+#define YEAR_MAX        2035
+#define I2C_CLOCK       400000  //400 kHz
+#define SERIAL_SPEED    115200
+#define BME_TEMP_MIN    1.0     //Celsius
+#define BME_TEMP_MAX    100.0   //Celsius
+#define BME_PRESS_MIN   870.0   //hPa
+#define BME_PRESS_MAX   1086.0  //hPa
+#define BME_HUM_MAX     99      //%
+#define GP_LED_ON       255
+#define GP_LED_OFF      0
 #define NTPSERVER       "hu.pool.ntp.org"
 
 //Global variables
 bool failSafe = FALSE;
-bool isAutoMode = FALSE;
-float actualHumidity;
 MAIN_SM stateMachine = INIT;
 strDateTime dateTime;
 
@@ -78,44 +84,47 @@ NTPtime NTPhu(NTPSERVER);   // Choose server pool as required
 WidgetTerminal terminal(V1);
 
 
-void ReadBME280()
+int ReadBME280()
 {
-  float actualTemperature;
-  float actualPressure;
+  float bmeTemperature;
+  float bmeHumidity;
+  float bmePressure;
   static float lastvalidTemperature;
   static float lastvalidHumidity;
   static float lastvalidPressure;
   static int bmeErrorcounter = 0;
 
   bme.takeForcedMeasurement();
-  actualTemperature = bme.readTemperature();
-  actualHumidity = bme.readHumidity();
-  actualPressure = bme.readPressure() / 100.0F;
+  bmeTemperature = bme.readTemperature();
+  bmeHumidity = bme.readHumidity();
+  bmePressure = bme.readPressure() / 100.0F; //Pa to hPa conversion
 
-  if (actualTemperature < 1.0 || actualTemperature > 100.0) {
-    actualTemperature = lastvalidTemperature;
+  if (bmeTemperature < BME_TEMP_MIN || bmeTemperature > BME_TEMP_MAX) {
+    bmeTemperature = lastvalidTemperature;
+  }
+  else {
+    lastvalidTemperature = bmeTemperature;
+  }
+  if (bmePressure < BME_PRESS_MIN || bmePressure > BME_PRESS_MAX) {
+    bmePressure = lastvalidPressure;
+  }
+  else {
+    lastvalidPressure = bmePressure;
+  }
+  if (bmeHumidity > BME_HUM_MAX) {
+    bmeHumidity = lastvalidHumidity;
     bmeErrorcounter++;
   }
   else {
-    lastvalidTemperature = actualTemperature;
+    lastvalidHumidity = bmeHumidity;
     bmeErrorcounter = 0;
   }
-  if (actualPressure > 1086.0 || actualPressure < 870.0) {
-    actualPressure = lastvalidPressure;
-  }
-  else {
-    lastvalidPressure = actualPressure;
-  }
-  if (actualHumidity > 99.0) {
-    actualHumidity = lastvalidHumidity;
-  }
-  else {
-    lastvalidHumidity = actualHumidity;
-  }
-  //ErrorManager(BME280_ERROR, bmeErrorcounter, 5);
+  //ErrorManager(BME280_ERROR, bmeErrorcounter, 5);n
   //Blynk.virtualWrite(V2, bmeTemperature);
   //Blynk.virtualWrite(V3, actualHumidity);
   //Blynk.virtualWrite(V4, actualPressure);
+
+  return (int(bmeHumidity));
 }
 
 void PCNT_config()
@@ -149,6 +158,22 @@ void PWM_config()
   ledcAttachPin(PWM_PIN, PWM_CHANNEL);
   ledcSetup(PWM_CHANNEL, PWM_FREQ, PWM_RESOLUTION);
   ledcWrite(PWM_CHANNEL, PWM_MAX_VALUE);
+}
+
+void Encoder_config()
+{
+  Encoder.reset();
+  Encoder.begin(i2cEncoderLibV2::INT_DATA | i2cEncoderLibV2::WRAP_DISABLE | i2cEncoderLibV2::DIRE_RIGHT | i2cEncoderLibV2::IPUP_DISABLE | i2cEncoderLibV2::RMOD_X1 | i2cEncoderLibV2::STD_ENCODER);
+  delay(100);
+  Encoder.writeGP1conf(i2cEncoderLibV2::GP_PWM | i2cEncoderLibV2::GP_PULL_DI | i2cEncoderLibV2::GP_INT_DI);  // Configure the GP1 pin in PWM mode
+  Encoder.writeGP2conf(i2cEncoderLibV2::GP_PWM | i2cEncoderLibV2::GP_PULL_DI | i2cEncoderLibV2::GP_INT_DI);  // Configure the GP2 pin in PWM mode
+  Encoder.writeGP3conf(i2cEncoderLibV2::GP_PWM | i2cEncoderLibV2::GP_PULL_DI | i2cEncoderLibV2::GP_INT_DI);  // Configure the GP3 pin in PWM mode
+  Encoder.writeInterruptConfig(i2cEncoderLibV2::RDEC | i2cEncoderLibV2::RINC | i2cEncoderLibV2::PUSHD | i2cEncoderLibV2::PUSHP); /* Enable required interrupts */
+  Encoder.writeAntibouncingPeriod(20);  /* Set an anti-bouncing of 200ms */
+  Encoder.writeDoublePushPeriod(50);  /*Set a period for the double push of 500ms*/
+  Encoder.writeGP1(GP_LED_OFF);
+  Encoder.writeGP2(GP_LED_OFF);
+  Encoder.writeGP3(GP_LED_OFF);
 }
 
 void PWM_Control(unsigned int reqSpeed)
@@ -232,34 +257,51 @@ void PWM_Control(unsigned int reqSpeed)
   }
 }
 
-void Threewire_Control(unsigned int reqSpeed)
+void Power_Control(unsigned int reqSpeed)
 {
+  bool isAutoNight;
   byte dutyCycle;
+  byte dacValue;
+  byte ledValue;
   static unsigned int prevSpeed;
+
+  if (reqSpeed == 0)
+  {
+    ledcWrite(PWM_CHANNEL, PWM_MAX_VALUE);
+    dacWrite(DAC_PIN, DAC_MAX_VALUE);
+    Encoder.writeGP2(GP_LED_OFF);
+    return;
+  }
+  if (AUTO == stateMachine)
+  {
+    if (RefreshDateTime()) //date & time is valid
+    {
+      if (dateTime.hour < NIGHT_BEFORE || dateTime.hour >= NIGHT_AFTER)
+      {
+        isAutoNight = TRUE;
+        reqSpeed = 3 * reqSpeed / 4; //75%
+      }
+    }
+  }
 
   if (reqSpeed != prevSpeed) //new PWM needed
   {
     dutyCycle = PWM_MAX_VALUE - (reqSpeed / RPM_STEP);
+    dacValue = DAC_MAX_VALUE - (reqSpeed / DAC_STEP);
+    ledValue = 2 * reqSpeed / RPM_STEP;
+
     Serial.print("PMW duty:");
     Serial.println(PWM_MAX_VALUE - dutyCycle);
-    ledcWrite(PWM_CHANNEL, dutyCycle);
-    prevSpeed = reqSpeed;
-    return;
-  }
-}
-
-void DAC_Control(unsigned int powerBasedOnRPM)
-{
-  byte dacValue;
-  static unsigned int prevPower;
-
-  if (powerBasedOnRPM != prevPower)
-  {
-    dacValue = DAC_MAX_VALUE - (powerBasedOnRPM / DAC_STEP);
     Serial.print("dacValue:");
     Serial.println(dacValue);
+    ledcWrite(PWM_CHANNEL, dutyCycle);
     dacWrite(DAC_PIN, dacValue);
-    prevPower = powerBasedOnRPM;
+    if (isAutoNight || (NIGHT == stateMachine))
+    {
+      ledValue = GP_LED_OFF;
+    }
+    Encoder.writeGP2(ledValue);
+    prevSpeed = reqSpeed;
   }
 }
 
@@ -283,9 +325,8 @@ void RotaryCheck()
         if (Encoder.updateStatus()) {
           if (Encoder.readStatus(i2cEncoderLibV2::PUSHD)) {
             digitalWrite(RELAY_PIN, HIGH);
-            Encoder.writeGP1(0);
+            Encoder.writeGP1(GP_LED_OFF);
             AutoHumididyManager();
-            isAutoMode = TRUE;
             stateMachine = AUTO;
           }
         }
@@ -295,15 +336,14 @@ void RotaryCheck()
       {
         if (Encoder.updateStatus()) {
           if (Encoder.readStatus(i2cEncoderLibV2::PUSHD)) {
+            Power_Control(0);
             digitalWrite(RELAY_PIN, LOW);
-            Encoder.writeGP1(0);
-            Encoder.writeGP2(0);
-            Encoder.writeGP3(0);
+            Encoder.writeGP1(GP_LED_OFF);
+            Encoder.writeGP3(GP_LED_OFF);
             stateMachine = OFF;
           }
           else if (Encoder.readStatus(i2cEncoderLibV2::PUSHP)) {
-            isAutoMode = FALSE;
-            Encoder.writeGP1(255);
+            Encoder.writeGP1(GP_LED_ON);
             stateMachine = MANUAL;
           }
         }
@@ -313,22 +353,20 @@ void RotaryCheck()
       {
         if (Encoder.updateStatus()) {
           if (Encoder.readStatus(i2cEncoderLibV2::PUSHD)) {
+            Power_Control(0);
             digitalWrite(RELAY_PIN, LOW);
-            Encoder.writeGP1(0);
-            Encoder.writeGP2(0);
-            Encoder.writeGP3(0);
+            Encoder.writeGP1(GP_LED_OFF);
+            Encoder.writeGP3(GP_LED_OFF);
             stateMachine = OFF;
           }
           else if (Encoder.readStatus(i2cEncoderLibV2::PUSHP)) {
-            Encoder.writeGP1(0);
-            Encoder.writeGP2(0);
+            Encoder.writeGP1(GP_LED_OFF);
+            Encoder.writeGP2(GP_LED_OFF);
             stateMachine = NIGHT;
           }
           else if (Encoder.readStatus(i2cEncoderLibV2::RINC) || Encoder.readStatus(i2cEncoderLibV2::RDEC))  {
             rotaryPosition = Encoder.readCounterInt();
-            Threewire_Control(rotaryPosition);
-            DAC_Control(rotaryPosition);
-            Encoder.writeGP2(2 * rotaryPosition / RPM_STEP);
+            Power_Control(rotaryPosition);
           }
         }
         break;
@@ -337,23 +375,19 @@ void RotaryCheck()
       {
         if (Encoder.updateStatus()) {
           if (Encoder.readStatus(i2cEncoderLibV2::PUSHD)) {
+            Power_Control(0);
             digitalWrite(RELAY_PIN, LOW);
-            Encoder.writeGP1(0);
-            Encoder.writeGP2(0);
-            Encoder.writeGP3(0);
+            Encoder.writeGP1(GP_LED_OFF);
+            Encoder.writeGP3(GP_LED_OFF);
             stateMachine = OFF;
           }
           else if (Encoder.readStatus(i2cEncoderLibV2::PUSHP)) {
             AutoHumididyManager();
-            Encoder.writeGP1(255);
-            isAutoMode = TRUE;
             stateMachine = AUTO;
           }
           else if (Encoder.readStatus(i2cEncoderLibV2::RINC) || Encoder.readStatus(i2cEncoderLibV2::RDEC))  {
             rotaryPosition = Encoder.readCounterInt();
-            Threewire_Control(rotaryPosition);
-            DAC_Control(rotaryPosition);
-            Encoder.writeGP2(2 * rotaryPosition / RPM_STEP);
+            Power_Control(rotaryPosition);
           }
         }
         break;
@@ -363,21 +397,18 @@ void RotaryCheck()
 
 void AutoHumididyManager()
 {
-  bool validdate;
-  float setHumidity;
+  unsigned int actualHumidity;
+  unsigned int setHumidity;
   unsigned int requestedSpeed;
-  static unsigned int gain = MAX_SPEED / (DEF_HUMIDITY - MIN_HUMIDITY);
+  const unsigned int gain = MAX_SPEED / (DEF_HUMIDITY - MIN_HUMIDITY);
 
-  validdate = RefreshDateTime();
-  ReadBME280();
+  actualHumidity = ReadBME280();
   Serial.println("Humidity:");
   Serial.println(actualHumidity);
   setHumidity = DEF_HUMIDITY;
   if (setHumidity < actualHumidity)
   {
-    Threewire_Control(0);
-    DAC_Control(0);
-    Encoder.writeGP2(0);
+    Power_Control(0);
   }
   else
   {
@@ -386,22 +417,7 @@ void AutoHumididyManager()
     {
       requestedSpeed = MAX_SPEED;
     }
-    Threewire_Control(requestedSpeed);
-    DAC_Control(requestedSpeed);
-    Encoder.writeGP2(2 * requestedSpeed / RPM_STEP);
-  }
-  if (validdate)
-  {
-    if (dateTime.hour < NIGHT_BEFORE || dateTime.hour >= NIGHT_AFTER)
-    {
-      gain = (MAX_SPEED / 2) / (DEF_HUMIDITY - MIN_HUMIDITY);
-      Encoder.writeGP1(0);
-      Encoder.writeGP2(0);
-    }
-    else
-    {
-      gain = MAX_SPEED / (DEF_HUMIDITY - MIN_HUMIDITY);
-    }
+    Power_Control(requestedSpeed);
   }
 }
 
@@ -410,16 +426,15 @@ bool RefreshDateTime()
   dateTime = NTPhu.getNTPtime(1.0, 1);
   if ((dateTime.year < YEAR_MIN) || (dateTime.year > YEAR_MAX))
   {
-    return 0;
+    return FALSE;
   }
   return (dateTime.valid);
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(SERIAL_SPEED);
   //PCNT_config();
   PWM_config();
-  pinMode(BUT_PIN, INPUT);
   pinMode(INTERRUPT_PIN, INPUT);
   pinMode(WATERLEVEL_PIN, INPUT_PULLUP);
   pinMode(DAC_PIN, OUTPUT);
@@ -428,7 +443,7 @@ void setup() {
   digitalWrite(RELAY_PIN, LOW);
 
   Wire.begin(SDA, SCL);
-  Wire.setClock(400000);
+  Wire.setClock(I2C_CLOCK);
   delay(100);
   bme.begin(BME280_ADDRESS_ALTERNATE);
   bme.setSampling(Adafruit_BME280::MODE_FORCED,   // mode
@@ -437,18 +452,7 @@ void setup() {
                   Adafruit_BME280::SAMPLING_X16,  // humidity
                   Adafruit_BME280::FILTER_X16);   // filtering
   delay(100);
-  Encoder.reset();
-  Encoder.begin(i2cEncoderLibV2::INT_DATA | i2cEncoderLibV2::WRAP_DISABLE | i2cEncoderLibV2::DIRE_RIGHT | i2cEncoderLibV2::IPUP_DISABLE | i2cEncoderLibV2::RMOD_X1 | i2cEncoderLibV2::STD_ENCODER);
-  delay(100);
-  Encoder.writeGP1conf(i2cEncoderLibV2::GP_PWM | i2cEncoderLibV2::GP_PULL_DI | i2cEncoderLibV2::GP_INT_DI);  // Configure the GP1 pin in PWM mode
-  Encoder.writeGP2conf(i2cEncoderLibV2::GP_PWM | i2cEncoderLibV2::GP_PULL_DI | i2cEncoderLibV2::GP_INT_DI);  // Configure the GP2 pin in PWM mode
-  Encoder.writeGP3conf(i2cEncoderLibV2::GP_PWM | i2cEncoderLibV2::GP_PULL_DI | i2cEncoderLibV2::GP_INT_DI);  // Configure the GP3 pin in PWM mode
-  Encoder.writeInterruptConfig(i2cEncoderLibV2::RDEC | i2cEncoderLibV2::RINC | i2cEncoderLibV2::PUSHD | i2cEncoderLibV2::PUSHP); /* Enable required interrupts */
-  Encoder.writeAntibouncingPeriod(20);  /* Set an anti-bouncing of 200ms */
-  Encoder.writeDoublePushPeriod(50);  /*Set a period for the double push of 500ms*/
-  Encoder.writeGP1(0);
-  Encoder.writeGP2(0);
-  Encoder.writeGP3(0);
+  Encoder_config();
 
   WiFi.mode(WIFI_STA);
   WiFi.begin (ssid, password);
@@ -474,14 +478,14 @@ void loop() {
   rotaryEvent = !digitalRead(INTERRUPT_PIN);
   if (tankIsEmpty)
   {
+    Power_Control(0);
     digitalWrite(RELAY_PIN, LOW);
-    Encoder.writeGP3(255);
-    Encoder.writeGP1(0);
-    Encoder.writeGP2(0);
-    isAutoMode = FALSE;
+    Encoder.writeGP3(GP_LED_ON);
+    Encoder.writeGP1(GP_LED_OFF);
+    Encoder.writeGP2(GP_LED_OFF);
     stateMachine = OFF;
   }
-  if (isAutoMode)
+  if (AUTO == stateMachine)
   {
     if (millis() - timer > AUTO_TIMER)
     {
