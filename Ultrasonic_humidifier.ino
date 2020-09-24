@@ -259,7 +259,7 @@ void PWM_Control(unsigned int reqSpeed)
 
 void Power_Control(unsigned int reqSpeed)
 {
-  bool isAutoNight;
+  bool isAutoNight = FALSE;
   byte dutyCycle;
   byte dacValue;
   byte ledValue;
@@ -300,6 +300,8 @@ void Power_Control(unsigned int reqSpeed)
     {
       ledValue = GP_LED_OFF;
     }
+    Serial.print("ledValue:");
+    Serial.println(ledValue);
     Encoder.writeGP2(ledValue);
     prevSpeed = reqSpeed;
   }
@@ -307,7 +309,7 @@ void Power_Control(unsigned int reqSpeed)
 
 void RotaryCheck()
 {
-  int rotaryPosition;
+  unsigned int rotaryPosition;
 
   switch (stateMachine)
   {
@@ -344,6 +346,8 @@ void RotaryCheck()
           }
           else if (Encoder.readStatus(i2cEncoderLibV2::PUSHP)) {
             Encoder.writeGP1(GP_LED_ON);
+            rotaryPosition = Encoder.readCounterInt();
+            Power_Control(rotaryPosition);
             stateMachine = MANUAL;
           }
         }
@@ -423,6 +427,10 @@ void AutoHumididyManager()
 
 bool RefreshDateTime()
 {
+  if (failSafe)
+  {
+    return FALSE;
+  }
   dateTime = NTPhu.getNTPtime(1.0, 1);
   if ((dateTime.year < YEAR_MIN) || (dateTime.year > YEAR_MAX))
   {
