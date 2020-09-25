@@ -45,9 +45,10 @@ enum MAIN_SM {
 #define PCNT_FILT_VAL   1023
 #define PCNT_L_LIM_VAL  0
 #define PCNT_H_LIM_VAL  14400
-#define DAC_DEFAULT     96
-#define DAC_STEP        38      //6000 / (255 - DAC_DEFAULT)
-#define DAC_MAX_VALUE   255     //2^8 - 1
+#define DAC_DEFAULT     96      //1.23V for LM2596 FEEDBACK
+#define DAC_STEP        84      //6000 / (DAC_LOW_VALUE - DAC_DEFAULT)
+#define DAC_MAX_VALUE   255
+#define DAC_LOW_VALUE   167     //MIN VOLTAGE FOR VAPORIZE
 #define RPM_STEP        47      //6000 / PWM_MAX_VALUE
 #define MAX_SPEED       5969    //PWM_MAX_VALUE * RPM_STEP
 #define SETTLING_TIME   3000    //3 sec
@@ -70,7 +71,7 @@ enum MAIN_SM {
 #define BME_HUM_MAX     99      //%
 #define GP_LED_ON       255
 #define GP_LED_OFF      0
-#define ENCODER_STEP  300
+#define ENCODER_STEP    300
 #define NTPSERVER       "hu.pool.ntp.org"
 
 //Global variables
@@ -277,7 +278,7 @@ void Power_Control(unsigned int reqSpeed)
       }
     }
     dutyCycle = PWM_MAX_VALUE - (reqSpeed / RPM_STEP);
-    dacValue = DAC_MAX_VALUE - (reqSpeed / DAC_STEP);
+    dacValue = DAC_LOW_VALUE - (reqSpeed / DAC_STEP);
     ledValue = reqSpeed / RPM_STEP;
 
     Serial.print("PMW duty:");
@@ -393,10 +394,11 @@ void AutoHumididyManager(bool forced)
 {
   unsigned int actualHumidity;
   unsigned int requestedSpeed;
+  unsigned int refreshPeriod;
   const unsigned int gain = MAX_SPEED / (DEF_HUMIDITY - MIN_HUMIDITY);
   static unsigned long timer;
 
-  if (millis() - timer > AUTO_TIMER)
+  if ((millis() - timer > refreshPeriod) || forced)
   {
     actualHumidity = ReadBME280();
     Serial.println("Humidity:");
