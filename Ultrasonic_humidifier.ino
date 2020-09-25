@@ -394,11 +394,10 @@ void AutoHumididyManager(bool forced)
 {
   unsigned int actualHumidity;
   unsigned int requestedSpeed;
-  unsigned int refreshPeriod;
   const unsigned int gain = MAX_SPEED / (DEF_HUMIDITY - MIN_HUMIDITY);
   static unsigned long timer;
 
-  if ((millis() - timer > refreshPeriod) || forced)
+  if ((millis() - timer > AUTO_TIMER) || forced)
   {
     actualHumidity = ReadBME280();
     Serial.println("Humidity:");
