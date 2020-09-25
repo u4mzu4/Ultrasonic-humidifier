@@ -50,10 +50,11 @@ enum MAIN_SM {
 #define DAC_MAX_VALUE   255     //2^8 - 1
 #define RPM_STEP        47      //6000 / PWM_MAX_VALUE
 #define MAX_SPEED       5969    //PWM_MAX_VALUE * RPM_STEP
-#define SETTLING_TIME   3       //3 sec
+#define SETTLING_TIME   3000    //3 sec
 #define DEF_HUMIDITY    60      //DEFAULT AUTO SETTINGS
 #define MIN_HUMIDITY    19      //LOWEST MEASURED HUMIDITY EVER
 #define AUTO_TIMER      60000   //1 min
+#define SPEED_TIMER     1000     //1 sec
 #define NIGHT_AFTER     21      //NIGHT START
 #define NIGHT_BEFORE    7       //NIGHT END
 #define ENCODER_ADDRESS 0x02
@@ -69,10 +70,12 @@ enum MAIN_SM {
 #define BME_HUM_MAX     99      //%
 #define GP_LED_ON       255
 #define GP_LED_OFF      0
+#define ENCODER_STEP  300
 #define NTPSERVER       "hu.pool.ntp.org"
 
 //Global variables
 bool failSafe = FALSE;
+unsigned int measRPM;
 MAIN_SM stateMachine = INIT;
 strDateTime dateTime;
 
@@ -82,50 +85,6 @@ i2cEncoderLibV2 Encoder(ENCODER_ADDRESS);
 NTPtime NTPhu(NTPSERVER);   // Choose server pool as required
 //BlynkTimer timer;
 WidgetTerminal terminal(V1);
-
-
-int ReadBME280()
-{
-  float bmeTemperature;
-  float bmeHumidity;
-  float bmePressure;
-  static float lastvalidTemperature;
-  static float lastvalidHumidity;
-  static float lastvalidPressure;
-  static int bmeErrorcounter = 0;
-
-  bme.takeForcedMeasurement();
-  bmeTemperature = bme.readTemperature();
-  bmeHumidity = bme.readHumidity();
-  bmePressure = bme.readPressure() / 100.0F; //Pa to hPa conversion
-
-  if (bmeTemperature < BME_TEMP_MIN || bmeTemperature > BME_TEMP_MAX) {
-    bmeTemperature = lastvalidTemperature;
-  }
-  else {
-    lastvalidTemperature = bmeTemperature;
-  }
-  if (bmePressure < BME_PRESS_MIN || bmePressure > BME_PRESS_MAX) {
-    bmePressure = lastvalidPressure;
-  }
-  else {
-    lastvalidPressure = bmePressure;
-  }
-  if (bmeHumidity > BME_HUM_MAX) {
-    bmeHumidity = lastvalidHumidity;
-    bmeErrorcounter++;
-  }
-  else {
-    lastvalidHumidity = bmeHumidity;
-    bmeErrorcounter = 0;
-  }
-  //ErrorManager(BME280_ERROR, bmeErrorcounter, 5);n
-  //Blynk.virtualWrite(V2, bmeTemperature);
-  //Blynk.virtualWrite(V3, actualHumidity);
-  //Blynk.virtualWrite(V4, actualPressure);
-
-  return (int(bmeHumidity));
-}
 
 void PCNT_config()
 {
@@ -176,94 +135,120 @@ void Encoder_config()
   Encoder.writeGP3(GP_LED_OFF);
 }
 
+void WiFi_Config()
+{
+  unsigned long wifitimeout = millis();
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin (ssid, password);
+  // Wait for connection
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    if (millis() - wifitimeout > TIMEOUT)
+    {
+      failSafe = TRUE;
+      break;
+    }
+  }
+}
+
 void PWM_Control(unsigned int reqSpeed)
 {
-  short counter;
-  unsigned int measRPM;
-  byte dutyCycle;
+  unsigned int expReqSpeed;
   static unsigned int prevSpeed;
-  static byte tunedDutyCycle = PWM_MAX_VALUE;
-  static byte waitForSettling = 0;
+  static unsigned int tunedSpeed;
+  static unsigned long settlingStarted;
 
-  pcnt_get_counter_value(PCNT_UNIT_0, &counter);
-  measRPM = 30 * counter; //60 * counter / 2
-  dutyCycle = PWM_MAX_VALUE - (reqSpeed / RPM_STEP);
-
-  Serial.print("Blower RPM:");
-  Serial.println(measRPM);
-  Serial.print("PMW duty:");
-  Serial.println(PWM_MAX_VALUE - dutyCycle);
-
-  if (abs(reqSpeed - measRPM) < 2 * RPM_STEP) //speed OK
+  expReqSpeed = Lin2Exp(double(reqSpeed));
+  if (abs(expReqSpeed - measRPM) < 2 * RPM_STEP) //speed OK
   {
+    return;
+  }
+  if (prevSpeed != reqSpeed)
+  {
+    Power_Control(reqSpeed);
     prevSpeed = reqSpeed;
-    pcnt_counter_clear(PCNT_UNIT_0);
-    return;
+    settlingStarted = millis();
   }
-
-  if (reqSpeed != prevSpeed) //new PWM needed
+  if (millis() - settlingStarted > SETTLING_TIME) //waiting for settling
   {
-    ledcWrite(PWM_CHANNEL, dutyCycle);
-    waitForSettling = SETTLING_TIME;
-    prevSpeed = reqSpeed;
-    tunedDutyCycle = dutyCycle;
-    pcnt_counter_clear(PCNT_UNIT_0);
-    return;
-  }
-
-  if (waitForSettling > 0) //waiting for settling
-  {
-    waitForSettling--;
-    pcnt_counter_clear(PCNT_UNIT_0);
-    return;
-  }
-
-  if (measRPM < reqSpeed) //fine tuning1 needed
-  {
-    tunedDutyCycle--;
-    if (tunedDutyCycle < 1)
+    if (measRPM < expReqSpeed) //fine tuning1 needed
     {
-      tunedDutyCycle = 1;
-    }
-    if ((dutyCycle - tunedDutyCycle) > 5)
-    {
-      Serial.println("PMW out of tolerance!");
+      tunedSpeed += RPM_STEP;
+      if ((tunedSpeed - reqSpeed) > ENCODER_STEP)
+      {
+        Serial.println("Speed out of tolerance!");
+        return;
+      }
+      Power_Control(tunedSpeed);
+      settlingStarted = millis();
       return;
     }
-    ledcWrite(PWM_CHANNEL, tunedDutyCycle);
-    waitForSettling = SETTLING_TIME;
-    prevSpeed = reqSpeed;
-    pcnt_counter_clear(PCNT_UNIT_0);
-    return;
-  }
-
-  if (measRPM > reqSpeed) //fine tuning2 needed
-  {
-    tunedDutyCycle++;
-    if (tunedDutyCycle > (PWM_MAX_VALUE - 1))
+    if (measRPM > expReqSpeed) //fine tuning1 needed
     {
-      tunedDutyCycle = PWM_MAX_VALUE - 1;
-    }
-    if ((tunedDutyCycle - dutyCycle) > 5)
-    {
-      Serial.println("PMW out of tolerance!");
+      tunedSpeed -= RPM_STEP;
+      if ((reqSpeed - tunedSpeed) > ENCODER_STEP)
+      {
+        Serial.println("Speed out of tolerance!");
+        return;
+      }
+      Power_Control(tunedSpeed);
+      settlingStarted = millis();
       return;
     }
-    ledcWrite(PWM_CHANNEL, tunedDutyCycle);
-    waitForSettling = SETTLING_TIME;
-    prevSpeed = reqSpeed;
-    pcnt_counter_clear(PCNT_UNIT_0);
-    return;
   }
+}
+
+int ReadBME280()
+{
+  float bmeTemperature;
+  float bmeHumidity;
+  float bmePressure;
+  static float lastvalidTemperature;
+  static float lastvalidHumidity;
+  static float lastvalidPressure;
+  static int bmeErrorcounter = 0;
+
+  bme.takeForcedMeasurement();
+  bmeTemperature = bme.readTemperature();
+  bmeHumidity = bme.readHumidity();
+  bmePressure = bme.readPressure() / 100.0F; //Pa to hPa conversion
+
+  if (bmeTemperature < BME_TEMP_MIN || bmeTemperature > BME_TEMP_MAX) {
+    bmeTemperature = lastvalidTemperature;
+  }
+  else {
+    lastvalidTemperature = bmeTemperature;
+  }
+  if (bmePressure < BME_PRESS_MIN || bmePressure > BME_PRESS_MAX) {
+    bmePressure = lastvalidPressure;
+  }
+  else {
+    lastvalidPressure = bmePressure;
+  }
+  if (bmeHumidity > BME_HUM_MAX) {
+    bmeHumidity = lastvalidHumidity;
+    bmeErrorcounter++;
+  }
+  else {
+    lastvalidHumidity = bmeHumidity;
+    bmeErrorcounter = 0;
+  }
+  //ErrorManager(BME280_ERROR, bmeErrorcounter, 5);n
+  //Blynk.virtualWrite(V2, bmeTemperature);
+  //Blynk.virtualWrite(V3, actualHumidity);
+  //Blynk.virtualWrite(V4, actualPressure);
+
+  return int(bmeHumidity);
 }
 
 void Power_Control(unsigned int reqSpeed)
 {
-  bool isAutoNight = FALSE;
   byte dutyCycle;
   byte dacValue;
   byte ledValue;
   static unsigned int prevSpeed;
+  static bool isAutoNight = FALSE;
 
   if (reqSpeed == 0)
   {
@@ -272,23 +257,28 @@ void Power_Control(unsigned int reqSpeed)
     Encoder.writeGP2(GP_LED_OFF);
     return;
   }
-  if (AUTO == stateMachine)
-  {
-    if (RefreshDateTime()) //date & time is valid
-    {
-      if (dateTime.hour < NIGHT_BEFORE || dateTime.hour >= NIGHT_AFTER)
-      {
-        isAutoNight = TRUE;
-        reqSpeed = 3 * reqSpeed / 4; //75%
-      }
-    }
-  }
 
+  reqSpeed = Lin2Exp(double(reqSpeed));
   if (reqSpeed != prevSpeed) //new PWM needed
   {
+    if (AUTO == stateMachine)
+    {
+      if (RefreshDateTime()) //date & time is valid
+      {
+        if (dateTime.hour < NIGHT_BEFORE || dateTime.hour >= NIGHT_AFTER)
+        {
+          isAutoNight = TRUE;
+          reqSpeed = 3 * reqSpeed / 4; //75%
+        }
+        else
+        {
+          isAutoNight = FALSE;
+        }
+      }
+    }
     dutyCycle = PWM_MAX_VALUE - (reqSpeed / RPM_STEP);
     dacValue = DAC_MAX_VALUE - (reqSpeed / DAC_STEP);
-    ledValue = 2 * reqSpeed / RPM_STEP;
+    ledValue = reqSpeed / RPM_STEP;
 
     Serial.print("PMW duty:");
     Serial.println(PWM_MAX_VALUE - dutyCycle);
@@ -317,7 +307,7 @@ void RotaryCheck()
       {
         Encoder.writeMax((int32_t)MAX_SPEED);  /* Set the maximum threshold */
         Encoder.writeMin((int32_t)0);      /* Set the minimum threshold */
-        Encoder.writeStep((int32_t)300);
+        Encoder.writeStep((int32_t)ENCODER_STEP);
         Encoder.writeCounter((int32_t)0);
         stateMachine = OFF;
         break;
@@ -327,8 +317,8 @@ void RotaryCheck()
         if (Encoder.updateStatus()) {
           if (Encoder.readStatus(i2cEncoderLibV2::PUSHD)) {
             digitalWrite(RELAY_PIN, HIGH);
-            Encoder.writeGP1(GP_LED_OFF);
-            AutoHumididyManager();
+            Encoder.writeGP3(GP_LED_OFF);
+            AutoHumididyManager(TRUE);
             stateMachine = AUTO;
           }
         }
@@ -386,7 +376,7 @@ void RotaryCheck()
             stateMachine = OFF;
           }
           else if (Encoder.readStatus(i2cEncoderLibV2::PUSHP)) {
-            AutoHumididyManager();
+            AutoHumididyManager(TRUE);
             stateMachine = AUTO;
           }
           else if (Encoder.readStatus(i2cEncoderLibV2::RINC) || Encoder.readStatus(i2cEncoderLibV2::RDEC))  {
@@ -399,29 +389,32 @@ void RotaryCheck()
   }
 }
 
-void AutoHumididyManager()
+void AutoHumididyManager(bool forced)
 {
   unsigned int actualHumidity;
-  unsigned int setHumidity;
   unsigned int requestedSpeed;
   const unsigned int gain = MAX_SPEED / (DEF_HUMIDITY - MIN_HUMIDITY);
+  static unsigned long timer;
 
-  actualHumidity = ReadBME280();
-  Serial.println("Humidity:");
-  Serial.println(actualHumidity);
-  setHumidity = DEF_HUMIDITY;
-  if (setHumidity < actualHumidity)
+  if (millis() - timer > AUTO_TIMER)
   {
-    Power_Control(0);
-  }
-  else
-  {
-    requestedSpeed = (setHumidity - actualHumidity) * gain;
-    if (requestedSpeed > MAX_SPEED)
+    actualHumidity = ReadBME280();
+    Serial.println("Humidity:");
+    Serial.println(actualHumidity);
+    if (DEF_HUMIDITY < actualHumidity)
     {
-      requestedSpeed = MAX_SPEED;
+      Power_Control(0);
     }
-    Power_Control(requestedSpeed);
+    else
+    {
+      requestedSpeed = (DEF_HUMIDITY - actualHumidity) * gain;
+      if (requestedSpeed > MAX_SPEED)
+      {
+        requestedSpeed = MAX_SPEED;
+      }
+      Power_Control(requestedSpeed);
+    }
+    timer = millis();
   }
 }
 
@@ -436,12 +429,42 @@ bool RefreshDateTime()
   {
     return FALSE;
   }
-  return (dateTime.valid);
+  return dateTime.valid;
+}
+
+void TankEmtyProcess()
+{
+  Power_Control(0);
+  digitalWrite(RELAY_PIN, LOW);
+  Encoder.writeGP3(GP_LED_ON);
+  Encoder.writeGP1(GP_LED_OFF);
+  Encoder.writeGP2(GP_LED_OFF);
+  stateMachine = OFF;
+}
+
+unsigned int Lin2Exp (double linearinput)
+{
+  double expoutput = linearinput * exp(1 + (-1 * linearinput / double(MAX_SPEED)));
+  return round(expoutput);
+}
+
+void Calculate_Speed()
+{
+  short counter;
+  static unsigned long stimer;
+
+  if (millis() - stimer > SPEED_TIMER)
+  {
+    pcnt_get_counter_value(PCNT_UNIT_0, &counter);
+    measRPM = 30 * counter; //60 * counter / 2
+    pcnt_counter_clear(PCNT_UNIT_0);
+    stimer = millis();
+  }
 }
 
 void setup() {
   Serial.begin(SERIAL_SPEED);
-  //PCNT_config();
+  PCNT_config();
   PWM_config();
   pinMode(INTERRUPT_PIN, INPUT);
   pinMode(WATERLEVEL_PIN, INPUT_PULLUP);
@@ -461,48 +484,32 @@ void setup() {
                   Adafruit_BME280::FILTER_X16);   // filtering
   delay(100);
   Encoder_config();
-
-  WiFi.mode(WIFI_STA);
-  WiFi.begin (ssid, password);
-  // Wait for connection
-  unsigned long wifitimeout = millis();
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    if (millis() - wifitimeout > TIMEOUT)
-    {
-      failSafe = TRUE;
-      break;
-    }
-  }
+  WiFi_Config();
+  RotaryCheck();
 }
 
 void loop() {
-  static unsigned long timer;
   bool tankIsEmpty;
   bool rotaryEvent;
 
   tankIsEmpty = !digitalRead(WATERLEVEL_PIN);
-  tankIsEmpty = FALSE; //to be cleared
   rotaryEvent = !digitalRead(INTERRUPT_PIN);
+
   if (tankIsEmpty)
   {
-    Power_Control(0);
-    digitalWrite(RELAY_PIN, LOW);
-    Encoder.writeGP3(GP_LED_ON);
-    Encoder.writeGP1(GP_LED_OFF);
-    Encoder.writeGP2(GP_LED_OFF);
-    stateMachine = OFF;
-  }
-  if (AUTO == stateMachine)
-  {
-    if (millis() - timer > AUTO_TIMER)
-    {
-      AutoHumididyManager();
-      timer = millis();
-    }
+    TankEmtyProcess();
   }
   if (rotaryEvent)
   {
     RotaryCheck();
+  }
+  /* if (OFF != stateMachine)
+    {
+      Calculate_Speed();
+    }
+  */
+  if (AUTO == stateMachine)
+  {
+    AutoHumididyManager(FALSE);
   }
 }
