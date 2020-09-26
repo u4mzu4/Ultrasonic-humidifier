@@ -269,7 +269,6 @@ void Power_Control(unsigned int reqSpeed)
         if (dateTime.hour < NIGHT_BEFORE || dateTime.hour >= NIGHT_AFTER)
         {
           isAutoNight = TRUE;
-          reqSpeed = 3 * reqSpeed / 4; //75%
         }
         else
         {
@@ -280,20 +279,20 @@ void Power_Control(unsigned int reqSpeed)
     dutyCycle = PWM_MAX_VALUE - (reqSpeed / RPM_STEP);
     dacValue = DAC_LOW_VALUE - (reqSpeed / DAC_STEP);
     ledValue = reqSpeed / RPM_STEP;
-
+    if (isAutoNight || (NIGHT == stateMachine))
+    {
+      ledValue = GP_LED_OFF;
+      dutyCycle = 4 * dutyCycle / 3; //75%
+    }
+    ledcWrite(PWM_CHANNEL, dutyCycle);
+    dacWrite(DAC_PIN, dacValue);
+    Encoder.writeGP2(ledValue);
     Serial.print("PMW duty:");
     Serial.println(PWM_MAX_VALUE - dutyCycle);
     Serial.print("dacValue:");
     Serial.println(dacValue);
-    ledcWrite(PWM_CHANNEL, dutyCycle);
-    dacWrite(DAC_PIN, dacValue);
-    if (isAutoNight || (NIGHT == stateMachine))
-    {
-      ledValue = GP_LED_OFF;
-    }
     Serial.print("ledValue:");
     Serial.println(ledValue);
-    Encoder.writeGP2(ledValue);
     prevSpeed = reqSpeed;
   }
 }
