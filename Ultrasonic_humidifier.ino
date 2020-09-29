@@ -50,7 +50,7 @@ enum MAIN_SM {
 #define DAC_MAX_VALUE   255
 #define DAC_LOW_VALUE   167     //MIN VOLTAGE FOR VAPORIZE
 #define RPM_STEP        47      //6000 / PWM_MAX_VALUE
-#define MAX_SPEED       2115    //ENOUGH FOR EVERYTHING
+#define MAX_SPEED       3008    //ENOUGH FOR EVERYTHING
 #define SETTLING_TIME   3000    //3 sec
 #define DEF_HUMIDITY    60      //DEFAULT AUTO SETTINGS
 #define MIN_HUMIDITY    19      //LOWEST MEASURED HUMIDITY EVER
@@ -71,7 +71,7 @@ enum MAIN_SM {
 #define BME_HUM_MAX     99      //%
 #define GP_LED_ON       255
 #define GP_LED_OFF      0
-#define ENCODER_STEP    106     ////MAX_SPEED / 20 ENCODER STEP
+#define ENCODER_STEP    151     //MAX_SPEED / 20 ENCODER STEP
 #define NTPSERVER       "hu.pool.ntp.org"
 
 //Global variables
