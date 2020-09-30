@@ -63,7 +63,6 @@ enum MAIN_SM {
 #define YEAR_MIN        2019
 #define YEAR_MAX        2035
 #define I2C_CLOCK       400000  //400 kHz
-#define SERIAL_SPEED    115200
 #define BME_TEMP_MIN    1.0     //Celsius
 #define BME_TEMP_MAX    100.0   //Celsius
 #define BME_PRESS_MIN   870.0   //hPa
@@ -178,7 +177,6 @@ void PWM_Control(unsigned int reqSpeed)
       tunedSpeed += RPM_STEP;
       if ((tunedSpeed - reqSpeed) > ENCODER_STEP)
       {
-        Serial.println("Speed out of tolerance!");
         return;
       }
       Power_Control(tunedSpeed);
@@ -190,7 +188,6 @@ void PWM_Control(unsigned int reqSpeed)
       tunedSpeed -= RPM_STEP;
       if ((reqSpeed - tunedSpeed) > ENCODER_STEP)
       {
-        Serial.println("Speed out of tolerance!");
         return;
       }
       Power_Control(tunedSpeed);
@@ -200,7 +197,7 @@ void PWM_Control(unsigned int reqSpeed)
   }
 }
 
-int ReadBME280()
+unsigned int ReadBME280()
 {
   float bmeTemperature;
   float bmeHumidity;
@@ -240,7 +237,7 @@ int ReadBME280()
   //Blynk.virtualWrite(V3, actualHumidity);
   //Blynk.virtualWrite(V4, actualPressure);
 
-  return int(bmeHumidity);
+  return (unsigned int)bmeHumidity;
 }
 
 void Power_Control(unsigned int reqSpeed)
@@ -287,12 +284,6 @@ void Power_Control(unsigned int reqSpeed)
     ledcWrite(PWM_CHANNEL, dutyCycle);
     dacWrite(DAC_PIN, dacValue);
     Encoder.writeGP2(ledValue);
-    Serial.print("PMW duty:");
-    Serial.println(PWM_MAX_VALUE - dutyCycle);
-    Serial.print("dacValue:");
-    Serial.println(dacValue);
-    Serial.print("ledValue:");
-    Serial.println(ledValue);
     prevSpeed = reqSpeed;
   }
 }
@@ -399,8 +390,6 @@ void AutoHumididyManager(bool forced)
   if ((millis() - timer > AUTO_TIMER) || forced)
   {
     actualHumidity = ReadBME280();
-    Serial.println("Humidity:");
-    Serial.println(actualHumidity);
     if (DEF_HUMIDITY < actualHumidity)
     {
       Power_Control(0);
@@ -429,7 +418,10 @@ bool RefreshDateTime()
   {
     return FALSE;
   }
-  return dateTime.valid;
+  else
+  {
+    return dateTime.valid;
+  }
 }
 
 void TankEmtyProcess()
@@ -463,7 +455,6 @@ void Calculate_Speed()
 }
 
 void setup() {
-  Serial.begin(SERIAL_SPEED);
   PCNT_config();
   PWM_config();
   pinMode(INTERRUPT_PIN, INPUT);
@@ -486,6 +477,7 @@ void setup() {
   Encoder_config();
   WiFi_Config();
   RotaryCheck();
+  ReadBME280();
 }
 
 void loop() {
