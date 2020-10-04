@@ -348,6 +348,8 @@ void RotaryCheck()
             Encoder.writeGP1(GP_LED_OFF);
             Encoder.writeGP2(GP_LED_OFF);
             stateMachine = NIGHT;
+            rotaryPosition = Encoder.readCounterInt();
+            Power_Control(rotaryPosition);
           }
           else if (Encoder.readStatus(i2cEncoderLibV2::RINC) || Encoder.readStatus(i2cEncoderLibV2::RDEC))  {
             rotaryPosition = Encoder.readCounterInt();
@@ -367,6 +369,7 @@ void RotaryCheck()
             stateMachine = OFF;
           }
           else if (Encoder.readStatus(i2cEncoderLibV2::PUSHP)) {
+            delay(100);
             AutoHumididyManager(TRUE);
             stateMachine = AUTO;
           }
